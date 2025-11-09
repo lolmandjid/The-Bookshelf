@@ -1,0 +1,1081 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>The Simple Bookshelf</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Load Inter Font -->
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&family=Playfair+Display:ital,wght@0,400..900;1,400..900&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #FDFBF8; /* Parchment background */
+            color: #4A3F35; /* Sepia text */
+        }
+        .font-serif-book {
+            font-family: 'Playfair Display', serif;
+        }
+        /* Custom bookshelf look */
+        .bookshelf-row {
+            background-color: #5D4037; /* Mahogany shelf */
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.5);
+            position: relative;
+            padding-top: 50px;
+            padding-bottom: 30px;
+            border-bottom: 5px solid #4E342E;
+        }
+        .bookshelf-row::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 5px;
+            background-color: #C79F5E; /* Gilded top edge */
+        }
+        .book-spine {
+            width: 100%;
+            height: 100%;
+            cursor: pointer;
+            transition: transform 0.3s ease-in-out;
+            transform-style: preserve-3d;
+            border-radius: 4px;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+        }
+        .book-spine:hover {
+            transform: scale(1.05);
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.5);
+        }
+    </style>
+</head>
+<body>
+
+    <div id="app-container" class="container mx-auto max-w-7xl p-4 md:p-6 min-h-screen">
+        <!-- Header -->
+        <header class="flex justify-between items-center py-4 border-b-2 mb-6 border-[#884A4A]">
+            <h1 class="text-3xl md:text-4xl font-serif-book font-bold tracking-wider text-[#884A4A]">
+                The Simple Bookshelf
+            </h1>
+            <button id="settings-button" class="text-lg font-medium px-4 py-2 bg-[#884A4A] text-white rounded-lg shadow-xl hover:bg-[#A07575] transition duration-200">
+                Profile
+            </button>
+        </header>
+
+        <!-- Genre Filter and Search -->
+        <div class="mb-6">
+            <input
+                type="text"
+                id="search-input"
+                placeholder="Search by Title or Author..."
+                class="w-full p-3 rounded-lg border-2 mb-4 text-[#4A3F35] border-[#607C6F] bg-white"
+            />
+            <div id="genre-filters" class="flex overflow-x-auto space-x-3 pb-3 -mx-4 px-4 sm:mx-0 sm:px-0">
+                <!-- Genre buttons will be injected here -->
+            </div>
+        </div>
+
+        <!-- Bookshelf Container -->
+        <main id="bookshelf-main">
+            <!-- Bookshelf rows will be injected here -->
+        </main>
+    </div>
+
+    <!-- Modals and Overlays -->
+    <div id="reading-modal" class="hidden fixed inset-0 z-50 overflow-y-auto transition-opacity duration-500 bg-black/80">
+        <!-- Reading content will be injected here -->
+    </div>
+
+    <div id="settings-modal" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+        <!-- Settings content will be injected here -->
+    </div>
+
+
+    <!-- JavaScript Logic (Runs the entire app) -->
+    <script type="module">
+        // Import Firebase modules
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, onSnapshot, collection, query, addDoc, serverTimestamp, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Global Variables
+        let db;
+        let auth;
+        let userId = null;
+        let isAuthReady = false;
+
+        let profile = {
+            nickname: 'A Reader',
+            pfpUrl: 'https://placehold.co/100x100/A07575/FFFFFF?text=PFP',
+            defaultTheme: 'classicSepia'
+        };
+
+        let books = [];
+        let currentTheme = 'classicSepia';
+        let searchQuery = '';
+        let activeGenre = 'All';
+
+
+        // --- FIREBASE CONFIGURATION (FOR DEPLOYMENT) ---
+        // For local testing in this canvas, these variables are provided.
+        // If you deploy this publicly, replace the 'null' below with your actual Firebase config keys
+        // from the Firebase Console (Settings -> Project Settings -> General -> Your apps).
+        
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'my-bookshelf-app-123';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        if (firebaseConfig) {
+            const app = initializeApp(firebaseConfig);
+            db = getFirestore(app);
+            auth = getAuth(app);
+        } else {
+            // Log error if config is missing but continue with mock data
+            console.error("Firebase configuration is missing. Data will not persist.");
+            isAuthReady = true; // Still allow app to render mock data
+        }
+        
+        // --- Mock Data ---
+        const MOCK_BOOKS = [
+            { title: "The Whispering Clock (Chapter 1)", author: "A. P. Alchemist", genre: "Fantasy", synopsis: "Aria Tempos discovers her hidden talent for manipulating time inside the Grand Sundial Academy, but quickly learns that temporal magic attracts dangerous attention from the Chronos Syndicate.", content: "Chapter One: The Grand Sundial's Secret\n\nThe air inside the Grand Sundial Academy tasted of ozone and ancient copper. Aria Tempos, a girl whose only temporal talent seemed to be chronic lateness, traced the intricate gears of the lobby clock. It was not just a timepiece; it was the heart of the school, its vast crystal face reflecting the shifting skies of Aethelgard. Headmaster Elias Thorne, his beard the color of polished brass, had just delivered his annual address—a tedious recitation of rules and warnings about temporal anomalies.\n\nAria wasn't listening. She was staring at a gear—a small, unassuming cog near the seven o'clock position—that was vibrating a shade faster than the others. It hummed a frequency only she seemed to detect, a sound that bypassed her ears and resonated directly in her chest. It felt like possibility.\n\nSuddenly, the humming intensified. The air chilled, and for a fraction of a second, the entire hall—the granite pillars, the floating portraits, the Headmaster mid-sentence—froze. Not stopped, but *frozen* in a single, infinite moment. Aria could move, could breathe, but the world was a statue garden of her own making. Panic, cold and sharp, seized her. She wasn't just observing the clock; she was controlling it.\n\nShe stumbled back, and the moment fractured, time snapping back into motion with a soft *click*. The Headmaster finished his sentence without a pause. No one noticed. No one but Aria. She gripped the cold stone of a pillar, her knuckles white. This wasn't just being late; this was something more, something forbidden. It was chronomancy, and the Syndicate hunted those who possessed it.\n\nLater that evening, while attempting to sneak into the Restricted Temporal Archive (a perfectly normal teenage impulse), she was cornered by two senior students—a Slytherin-like duo named Kael and Zarya. Kael sneered, 'Late again, Tempos? Or did you try to wind the clock back to pass your Potions test?' Aria felt the familiar surge of cold panic. Instinctively, she reached out with her mind, not intending to stop time, but just to... slow it. Kael's sneer stretched, elongating into a slow, terrifying rictus. His hand, reaching for her shoulder, moved with the glacial speed of molasses. Zarya's yell was a deep, drawn-out groan. Aria now understood: the power wasn't panic; it was raw, untrained control. It was beautiful. And terrifying. She used the temporal delay to slip past them, leaving them suspended in their slow-motion fury, knowing that her life at the Grand Sundial Academy had just become infinitely more complicated—and infinitely more dangerous. The whispering clock had finally spoken to her, and its secret was a heavy one to bear." },
+            { title: "Murder in the Conservatory", author: "Agatha Crisp", genre: "Murder Mystery", synopsis: "When Lord Blackwood is found dead among his exotic orchids, Detective Inspector Thorne must navigate a house full of disgruntled heirs and rare poisons to find the culprit.", content: "The fog was thick enough to carve with a bread knife, yet inside the conservatory, the air was humid, cloying, and intensely floral. Lord Blackwood, a man known more for his cruelty than his botanical expertise, lay sprawled among a patch of rare Night Bloom orchids. His monocle had fallen into a pot of peat moss. Inspector Thorne knelt beside the body, careful not to disturb the delicate ecosystem. 'Cause of death?' he murmured to the attending physician. The doctor, sweating slightly in the tropical heat, adjusted his glasses. 'No visible trauma, Inspector. But the skin has a faint blue sheen... looks like a fast-acting neurotoxin, perhaps derived from one of his beloved, exotic specimens.' Thorne sighed. A house full of suspects and a garden full of weapons. This was going to be a long night." },
+            { title: "Galactic Drift: A Romcom", author: "Elara Vance", genre: "Romcom", synopsis: "A cynical asteroid miner and a brilliant but uptight xeno-linguist are forced to share a tiny escape pod after their starship breaks down. Love is the last thing on the itinerary.", content: "Kira thought the worst part of her day was finding out her co-pilot had traded their emergency rations for a slightly dented antique toaster. She was wrong. The worst part was being trapped in an escape pod the size of a utility closet with Dr. Aris Thorne. Aris, whose brilliance was only matched by his fastidiousness, was currently trying to debug the life support system while simultaneously criticizing the structural integrity of Kira's space-boots. 'Honestly, Miner,' he sighed, pushing his perfect silver-rimmed glasses up his nose, 'Must your footwear shed so much debris?' Kira, already stressed, gritted her teeth. 'They’re practical, Doctor. Unlike your three-piece tweed suit, which is currently taking up 70% of my legroom.' As the pod gave a worrying lurch, Aris tumbled directly onto her, their faces inches apart. His eyes, usually full of analytical ice, were wide with a very human panic. 'Well,' he whispered, the scent of lavender and terror filling the tiny space, 'This is an unprecedented proximity event.'"}
+        ];
+
+        const themeStyles = {
+            classicSepia: {
+                background: '#FDFBF8', text: '#4A3F35',
+                contentBg: '#FDFBF8', isImage: false,
+                headingColor: '#884A4A'
+            },
+            darkAcademia: {
+                background: '#273746', text: '#EAECEE',
+                contentBg: '#273746', isImage: false,
+                headingColor: '#C79F5E'
+            },
+            agedParchment: {
+                background: '#F4F1D7', text: '#443C36',
+                contentBg: '#F4F1D7', isImage: false,
+                headingColor: '#443C36'
+            },
+            cozyCoffeeShop: {
+                backgroundImage: 'url("https://placehold.co/1920x1080/403020/FFFFFF?text=Cozy+Coffee+Shop")',
+                filter: 'brightness(0.65)',
+                text: 'text-white/90',
+                contentBg: 'bg-black/60',
+                isImage: true,
+                headingColor: '#C79F5E'
+            },
+            greenValleyView: {
+                backgroundImage: 'url("https://placehold.co/1920x1080/A0B2A0/FFFFFF?text=Green+Valley+View")',
+                filter: 'brightness(0.75)',
+                text: 'text-gray-800',
+                contentBg: 'bg-white/70',
+                isImage: true,
+                headingColor: '#607C6F'
+            }
+        };
+
+        // --- Utility Functions ---
+
+        const getProfileDocRef = () => {
+            return db && userId ? doc(db, 'artifacts', appId, 'users', userId, 'profile', 'user_data') : null;
+        };
+
+        const getBooksCollectionRef = () => {
+            return db && userId ? collection(db, 'artifacts', appId, 'users', userId, 'books') : null;
+        };
+
+        const saveProfile = async (newProfile) => {
+            const profileRef = getProfileDocRef();
+            if (profileRef) {
+                await setDoc(profileRef, newProfile, { merge: true }).catch(console.error);
+            }
+            // Update local state and re-render header/modal
+            profile = { ...profile, ...newProfile };
+            currentTheme = profile.defaultTheme;
+            renderApp();
+        };
+
+        const addBookToDb = async (book) => {
+            const booksRef = getBooksCollectionRef();
+            if (booksRef) {
+                await addDoc(booksRef, {
+                    ...book,
+                    createdAt: serverTimestamp()
+                });
+            }
+        };
+
+        // --- Modal Rendering ---
+
+        const renderReadingModal = (book) => {
+            const modal = document.getElementById('reading-modal');
+            const style = themeStyles[currentTheme];
+
+            // Apply theme styles to modal container
+            modal.style.backgroundColor = style.isImage ? 'rgba(0, 0, 0, 0.9)' : style.background;
+            modal.style.backgroundImage = style.isImage ? style.backgroundImage : 'none';
+            modal.style.filter = style.isImage ? style.filter : 'none';
+            modal.className = `fixed inset-0 z-50 overflow-y-auto ${style.isImage ? 'bg-cover bg-fixed bg-center' : ''}`;
+
+            const themeButtons = Object.keys(themeStyles).map(themeName => `
+                <button
+                    onclick="handleThemeChange('${themeName}')"
+                    class="px-3 py-1 rounded-full text-xs font-semibold uppercase tracking-wider transition-all duration-200 shadow-md
+                        ${currentTheme === themeName ? 'bg-[#C79F5E] text-[#4A3F35] scale-105' : 'bg-white/80 text-gray-700 hover:bg-white'}"
+                >
+                    ${themeName.replace(/([A-Z])/g, ' $1').trim()}
+                </button>
+            `).join('');
+
+
+            modal.innerHTML = `
+                <div class="relative z-10 min-h-screen p-4 md:p-8 flex flex-col items-center justify-start transition-all duration-500 transform scale-100 translate-y-0 font-serif-book">
+                    <!-- Theme Selector & Back Button -->
+                    <div class="w-full max-w-6xl flex flex-wrap justify-between items-center mb-6 p-2 rounded-lg bg-black/10 backdrop-blur-sm">
+                        <button
+                            onclick="handleCloseBook()"
+                            class="text-lg font-bold px-4 py-2 bg-[#884A4A] text-white rounded-lg shadow-xl hover:bg-[#A07575] transition duration-200"
+                        >
+                            ← Back to Bookshelf
+                        </button>
+                        <div class="flex flex-wrap gap-2 text-sm">
+                            ${themeButtons}
+                        </div>
+                    </div>
+
+                    <!-- Book Content -->
+                    <div class="w-full max-w-5xl p-6 md:p-12 shadow-2xl rounded-lg border-2 border-black/10 transition-colors duration-500 ${style.contentBg} ${style.text}">
+                        <h1 class="text-4xl md:text-5xl font-bold mb-2 text-center" style="color: ${style.headingColor || '#884A4A'};">
+                            ${book.title}
+                        </h1>
+                        <h2 class="text-xl md:text-2xl italic mb-6 text-center opacity-80">
+                            by ${book.author}
+                        </h2>
+                        <div class="mt-8 text-lg leading-relaxed space-y-6 whitespace-pre-wrap">
+                            ${book.content.split('\n\n').map(p => `<p>${p}</p>`).join('')}
+                        </div>
+                    </div>
+                </div>
+            `;
+            modal.classList.remove('hidden');
+        };
+
+        const renderSettingsModal = () => {
+            const modal = document.getElementById('settings-modal');
+
+            modal.innerHTML = `
+                <div class="bg-white p-8 rounded-xl shadow-2xl w-full max-w-lg border-4 border-[#884A4A]">
+                    <h2 class="text-3xl font-serif-book font-bold mb-6 text-[#4A3F35]">Profile Settings</h2>
+
+                    <!-- PFP Preview -->
+                    <div class="mb-6 flex flex-col items-center">
+                        <img
+                            src="${profile.pfpUrl}"
+                            alt="Profile Preview"
+                            class="w-24 h-24 rounded-full object-cover border-4 border-gray-300 shadow-lg mb-3"
+                            onerror="this.onerror=null;this.src='https://placehold.co/100x100/A07575/FFFFFF?text=PFP'"
+                        />
+                        <p class="text-sm text-gray-500 italic">User ID: ${userId || 'Authenticating...'}</p>
+                    </div>
+
+                    <!-- Nickname Input -->
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium mb-1 text-[#4A3F35]">Nickname</label>
+                        <input
+                            type="text"
+                            id="setting-nickname"
+                            value="${profile.nickname}"
+                            class="w-full p-3 border-2 border-gray-300 rounded-lg focus:border-gray-500 transition"
+                            placeholder="Enter your reading name"
+                        />
+                    </div>
+
+                    <!-- PFP URL Input -->
+                    <div class="mb-6">
+                        <label class="block text-sm font-medium mb-1 text-[#4A3F35]">Profile Picture URL</label>
+                        <input
+                            type="text"
+                            id="setting-pfpurl"
+                            value="${profile.pfpUrl}"
+                            class="w-full p-3 border-2 border-gray-300 rounded-lg focus:border-gray-500 transition"
+                            placeholder="https://your-image-url.jpg"
+                        />
+                    </div>
+
+                    <!-- Buttons -->
+                    <div class="flex justify-end space-x-3">
+                        <button
+                            onclick="handleCloseSettings()"
+                            class="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition"
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            onclick="handleSaveSettings()"
+                            class="px-4 py-2 bg-[#C79F5E] text-[#4A3F35] rounded-lg hover:bg-[#D5B87E] font-semibold transition"
+                        >
+                            Save Changes
+                        </button>
+                    </div>
+                </div>
+            `;
+            modal.classList.remove('hidden');
+        };
+
+        // --- Core Rendering Function ---
+
+        const renderBookshelf = () => {
+            const main = document.getElementById('bookshelf-main');
+            const genreColorMap = {
+                'Fantasy': '#6A1B9A', 'Murder Mystery': '#B71C1C', 'Romcom': '#E91E63', 'Adventure': '#00695C', 'All': '#4A3F35',
+            };
+
+            const filteredBooks = books.filter(book => {
+                const matchesGenre = activeGenre === 'All' || book.genre === activeGenre;
+                const matchesSearch = searchQuery === '' ||
+                    book.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                    book.author.toLowerCase().includes(searchQuery.toLowerCase());
+                return matchesGenre && matchesSearch;
+            });
+
+            if (filteredBooks.length === 0) {
+                main.innerHTML = `<p class="text-center text-xl py-20 italic opacity-70">No books found matching your criteria.</p>`;
+                return;
+            }
+
+            let html = '';
+            for (let i = 0; i < filteredBooks.length; i += 4) {
+                const shelfBooks = filteredBooks.slice(i, i + 4);
+                
+                // Start a new bookshelf row
+                html += '<div class="bookshelf-row mb-12">';
+                html += '<div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-8 px-4 sm:px-8">';
+
+                shelfBooks.forEach((book, index) => {
+                    const spineColor = genreColorMap[book.genre] || genreColorMap['All'];
+                    const bookHtml = `
+                        <div class="h-96">
+                            <div
+                                onclick="handleOpenBook('${book.id}')"
+                                style="background-color: ${spineColor};"
+                                class="book-spine flex flex-col items-center justify-between p-4 text-white font-serif-book relative border-l-[10px] border-r-[10px] border-black/10 rounded-r-sm"
+                            >
+                                <div class="absolute inset-0 z-0 shadow-[inset_0_0_10px_rgba(0,0,0,0.5),inset_0_0_15px_rgba(255,255,255,0.2)]"></div>
+                                <div class="h-2 w-full bg-white/10"></div>
+                                <div class="flex flex-col items-center justify-center h-full w-full p-2">
+                                    <p
+                                        style="color: #C79F5E;"
+                                        class="text-center text-xs font-bold uppercase tracking-wide overflow-hidden max-h-16"
+                                    >
+                                        ${book.title}
+                                    </p>
+                                    <p class="text-center text-xs italic opacity-80 mt-1">${book.author}</p>
+                                </div>
+                                <div class="h-2 w-full bg-white/10"></div>
+                                <div class="text-xs absolute bottom-1 right-1 px-1 py-0.5 rounded-full bg-black/30 opacity-70">
+                                    ${book.genre}
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                    html += bookHtml;
+                });
+
+                // Close grid and row
+                html += '</div></div>';
+            }
+
+            main.innerHTML = html;
+        };
+
+        const renderGenreFilters = () => {
+            const filterContainer = document.getElementById('genre-filters');
+            const uniqueGenres = ['All', ...new Set(books.map(b => b.genre))].sort();
+
+            const genreHtml = uniqueGenres.map(genre => `
+                <button
+                    onclick="handleGenreSelect('${genre}')"
+                    class="px-4 py-2 text-sm font-medium rounded-full transition-all duration-200 whitespace-nowrap border-2
+                    ${activeGenre === genre
+                        ? 'bg-[#607C6F] text-white shadow-md shadow-[#607C6F]/50 border-white'
+                        : 'bg-white text-[#4A3F35] border-[#607C6F] hover:bg-gray-100'
+                    }"
+                >
+                    ${genre}
+                </button>
+            `).join('');
+
+            filterContainer.innerHTML = genreHtml;
+        };
+        
+        const renderApp = () => {
+            renderBookshelf();
+            renderGenreFilters();
+        }
+
+        // --- Event Handlers (Made global for inline HTML use) ---
+        window.handleThemeChange = (theme) => {
+            currentTheme = theme;
+            saveProfile({ defaultTheme: theme });
+            // Re-render modal with new theme instantly
+            const bookToOpen = books.find(b => b.id === document.getElementById('reading-modal').dataset.bookId);
+            if (bookToOpen) {
+                renderReadingModal(bookToOpen);
+            }
+        };
+
+        window.handleOpenBook = (bookId) => {
+            const book = books.find(b => b.id === bookId);
+            if (book) {
+                document.getElementById('reading-modal').dataset.bookId = bookId;
+                renderReadingModal(book);
+            }
+        };
+
+        window.handleCloseBook = () => {
+            document.getElementById('reading-modal').classList.add('hidden');
+        };
+
+        window.handleGenreSelect = (genre) => {
+            activeGenre = genre;
+            document.getElementById('search-input').value = '';
+            searchQuery = '';
+            renderApp();
+        };
+
+        window.handleCloseSettings = () => {
+            document.getElementById('settings-modal').classList.add('hidden');
+        };
+
+        window.handleSaveSettings = () => {
+            const nickname = document.getElementById('setting-nickname').value;
+            const pfpUrl = document.getElementById('setting-pfpurl').value;
+            saveProfile({ nickname, pfpUrl });
+            handleCloseSettings();
+        };
+
+        // --- Data Listeners ---
+
+        const startFirestoreListeners = () => {
+            // 1. Profile Listener
+            const profileRef = getProfileDocRef();
+            if (profileRef) {
+                onSnapshot(profileRef, (doc) => {
+                    if (doc.exists()) {
+                        profile = { ...profile, ...doc.data() };
+                        currentTheme = profile.defaultTheme || 'classicSepia';
+                    } else {
+                        setDoc(profileRef, profile, { merge: true }).catch(console.error);
+                    }
+                    renderApp(); // Rerender in case nickname/theme changed
+                }, console.error);
+            }
+
+            // 2. Books Listener
+            const booksRef = getBooksCollectionRef();
+            if (booksRef) {
+                // FIX: Changed 'collection(booksRef, 'books')' to 'booksRef'. 
+                // The reference from getBooksCollectionRef is already the correct collection path 
+                // (artifacts/appId/users/userId/books), which has an odd number of segments.
+                onSnapshot(booksRef, async (snapshot) => {
+                    if (snapshot.empty && MOCK_BOOKS.length > 0) {
+                        // If empty, populate with mock data
+                        const existingDocs = await getDocs(booksRef);
+                        if (existingDocs.empty) { // Prevent re-adding if snapshot was just slow
+                            MOCK_BOOKS.forEach(book => addBookToDb(book));
+                        }
+                    }
+
+                    books = snapshot.docs.map(doc => ({
+                        id: doc.id,
+                        ...doc.data()
+                    }));
+                    renderApp();
+                }, console.error);
+            }
+        };
+
+
+        // --- Initialization ---
+
+        window.onload = () => {
+            // Event Listeners for main UI elements
+            document.getElementById('settings-button').addEventListener('click', () => renderSettingsModal());
+            document.getElementById('search-input').addEventListener('input', (e) => {
+                searchQuery = e.target.value;
+                activeGenre = 'All';
+                renderApp();
+            });
+            
+            // Firebase Authentication
+            if (auth) {
+                onAuthStateChanged(auth, async (user) => {
+                    if (user) {
+                        userId = user.uid;
+                        isAuthReady = true;
+                        startFirestoreListeners();
+                    } else {
+                        if (initialAuthToken) {
+                            try {
+                                await signInWithCustomToken(auth, initialAuthToken);
+                            } catch (e) {
+                                console.error("Custom token sign-in failed, signing in anonymously.", e);
+                                await signInAnonymously(auth);
+                            }
+                        } else {
+                            await signInAnonymously(auth);
+                        }
+                    }
+                });
+            } else {
+                // No Firebase config: Use mock data directly
+                books = MOCK_BOOKS.map((book, index) => ({ ...book, id: `mock-${index}` }));
+                renderApp();
+            }
+        };
+    </script>
+</body>
+</html>
+
+On Sunday, November 9, 2025, Raiyan Alif <rumanashimu2019@gmail.com> wrote:
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>The Simple Bookshelf</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Load Inter Font -->
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&family=Playfair+Display:ital,wght@0,400..900;1,400..900&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #FDFBF8; /* Parchment background */
+            color: #4A3F35; /* Sepia text */
+        }
+        .font-serif-book {
+            font-family: 'Playfair Display', serif;
+        }
+        /* Custom bookshelf look */
+        .bookshelf-row {
+            background-color: #5D4037; /* Mahogany shelf */
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.5);
+            position: relative;
+            padding-top: 50px;
+            padding-bottom: 30px;
+            border-bottom: 5px solid #4E342E;
+        }
+        .bookshelf-row::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 5px;
+            background-color: #C79F5E; /* Gilded top edge */
+        }
+        .book-spine {
+            width: 100%;
+            height: 100%;
+            cursor: pointer;
+            transition: transform 0.3s ease-in-out;
+            transform-style: preserve-3d;
+            border-radius: 4px;
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+        }
+        .book-spine:hover {
+            transform: scale(1.05);
+            box-shadow: 0 10px 20px rgba(0, 0, 0, 0.5);
+        }
+    </style>
+</head>
+<body>
+
+    <div id="app-container" class="container mx-auto max-w-7xl p-4 md:p-6 min-h-screen">
+        <!-- Header -->
+        <header class="flex justify-between items-center py-4 border-b-2 mb-6 border-[#884A4A]">
+            <h1 class="text-3xl md:text-4xl font-serif-book font-bold tracking-wider text-[#884A4A]">
+                The Simple Bookshelf
+            </h1>
+            <button id="settings-button" class="text-lg font-medium px-4 py-2 bg-[#884A4A] text-white rounded-lg shadow-xl hover:bg-[#A07575] transition duration-200">
+                Profile
+            </button>
+        </header>
+
+        <!-- Genre Filter and Search -->
+        <div class="mb-6">
+            <input
+                type="text"
+                id="search-input"
+                placeholder="Search by Title or Author..."
+                class="w-full p-3 rounded-lg border-2 mb-4 text-[#4A3F35] border-[#607C6F] bg-white"
+            />
+            <div id="genre-filters" class="flex overflow-x-auto space-x-3 pb-3 -mx-4 px-4 sm:mx-0 sm:px-0">
+                <!-- Genre buttons will be injected here -->
+            </div>
+        </div>
+
+        <!-- Bookshelf Container -->
+        <main id="bookshelf-main">
+            <!-- Bookshelf rows will be injected here -->
+        </main>
+    </div>
+
+    <!-- Modals and Overlays -->
+    <div id="reading-modal" class="hidden fixed inset-0 z-50 overflow-y-auto transition-opacity duration-500 bg-black/80">
+        <!-- Reading content will be injected here -->
+    </div>
+
+    <div id="settings-modal" class="hidden fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+        <!-- Settings content will be injected here -->
+    </div>
+
+
+    <!-- JavaScript Logic (Runs the entire app) -->
+    <script type="module">
+        // Import Firebase modules
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, setDoc, onSnapshot, collection, query, addDoc, serverTimestamp, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Global Variables
+        let db;
+        let auth;
+        let userId = null;
+        let isAuthReady = false;
+
+        let profile = {
+            nickname: 'A Reader',
+            pfpUrl: 'https://placehold.co/100x100/A07575/FFFFFF?text=PFP',
+            defaultTheme: 'classicSepia'
+        };
+
+        let books = [];
+        let currentTheme = 'classicSepia';
+        let searchQuery = '';
+        let activeGenre = 'All';
+
+
+        // --- FIREBASE CONFIGURATION (FOR DEPLOYMENT) ---
+        // For local testing in this canvas, these variables are provided.
+        // If you deploy this publicly, replace the 'null' below with your actual Firebase config keys
+        // from the Firebase Console (Settings -> Project Settings -> General -> Your apps).
+        
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'my-bookshelf-app-123';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : null;
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        if (firebaseConfig) {
+            const app = initializeApp(firebaseConfig);
+            db = getFirestore(app);
+            auth = getAuth(app);
+        } else {
+            // Log error if config is missing but continue with mock data
+            console.error("Firebase configuration is missing. Data will not persist.");
+            isAuthReady = true; // Still allow app to render mock data
+        }
+        
+        // --- Mock Data ---
+        const MOCK_BOOKS = [
+            { title: "The Whispering Clock (Chapter 1)", author: "A. P. Alchemist", genre: "Fantasy", synopsis: "Aria Tempos discovers her hidden talent for manipulating time inside the Grand Sundial Academy, but quickly learns that temporal magic attracts dangerous attention from the Chronos Syndicate.", content: "Chapter One: The Grand Sundial's Secret\n\nThe air inside the Grand Sundial Academy tasted of ozone and ancient copper. Aria Tempos, a girl whose only temporal talent seemed to be chronic lateness, traced the intricate gears of the lobby clock. It was not just a timepiece; it was the heart of the school, its vast crystal face reflecting the shifting skies of Aethelgard. Headmaster Elias Thorne, his beard the color of polished brass, had just delivered his annual address—a tedious recitation of rules and warnings about temporal anomalies.\n\nAria wasn't listening. She was staring at a gear—a small, unassuming cog near the seven o'clock position—that was vibrating a shade faster than the others. It hummed a frequency only she seemed to detect, a sound that bypassed her ears and resonated directly in her chest. It felt like possibility.\n\nSuddenly, the humming intensified. The air chilled, and for a fraction of a second, the entire hall—the granite pillars, the floating portraits, the Headmaster mid-sentence—froze. Not stopped, but *frozen* in a single, infinite moment. Aria could move, could breathe, but the world was a statue garden of her own making. Panic, cold and sharp, seized her. She wasn't just observing the clock; she was controlling it.\n\nShe stumbled back, and the moment fractured, time snapping back into motion with a soft *click*. The Headmaster finished his sentence without a pause. No one noticed. No one but Aria. She gripped the cold stone of a pillar, her knuckles white. This wasn't just being late; this was something more, something forbidden. It was chronomancy, and the Syndicate hunted those who possessed it.\n\nLater that evening, while attempting to sneak into the Restricted Temporal Archive (a perfectly normal teenage impulse), she was cornered by two senior students—a Slytherin-like duo named Kael and Zarya. Kael sneered, 'Late again, Tempos? Or did you try to wind the clock back to pass your Potions test?' Aria felt the familiar surge of cold panic. Instinctively, she reached out with her mind, not intending to stop time, but just to... slow it. Kael's sneer stretched, elongating into a slow, terrifying rictus. His hand, reaching for her shoulder, moved with the glacial speed of molasses. Zarya's yell was a deep, drawn-out groan. Aria now understood: the power wasn't panic; it was raw, untrained control. It was beautiful. And terrifying. She used the temporal delay to slip past them, leaving them suspended in their slow-motion fury, knowing that her life at the Grand Sundial Academy had just become infinitely more complicated—and infinitely more dangerous. The whispering clock had finally spoken to her, and its secret was a heavy one to bear." },
+            { title: "Murder in the Conservatory", author: "Agatha Crisp", genre: "Murder Mystery", synopsis: "When Lord Blackwood is found dead among his exotic orchids, Detective Inspector Thorne must navigate a house full of disgruntled heirs and rare poisons to find the culprit.", content: "The fog was thick enough to carve with a bread knife, yet inside the conservatory, the air was humid, cloying, and intensely floral. Lord Blackwood, a man known more for his cruelty than his botanical expertise, lay sprawled among a patch of rare Night Bloom orchids. His monocle had fallen into a pot of peat moss. Inspector Thorne knelt beside the body, careful not to disturb the delicate ecosystem. 'Cause of death?' he murmured to the attending physician. The doctor, sweating slightly in the tropical heat, adjusted his glasses. 'No visible trauma, Inspector. But the skin has a faint blue sheen... looks like a fast-acting neurotoxin, perhaps derived from one of his beloved, exotic specimens.' Thorne sighed. A house full of suspects and a garden full of weapons. This was going to be a long night." },
+            { title: "Galactic Drift: A Romcom", author: "Elara Vance", genre: "Romcom", synopsis: "A cynical asteroid miner and a brilliant but uptight xeno-linguist are forced to share a tiny escape pod after their starship breaks down. Love is the last thing on the itinerary.", content: "Kira thought the worst part of her day was finding out her co-pilot had traded their emergency rations for a slightly dented antique toaster. She was wrong. The worst part was being trapped in an escape pod the size of a utility closet with Dr. Aris Thorne. Aris, whose brilliance was only matched by his fastidiousness, was currently trying to debug the life support system while simultaneously criticizing the structural integrity of Kira's space-boots. 'Honestly, Miner,' he sighed, pushing his perfect silver-rimmed glasses up his nose, 'Must your footwear shed so much debris?' Kira, already stressed, gritted her teeth. 'They’re practical, Doctor. Unlike your three-piece tweed suit, which is currently taking up 70% of my legroom.' As the pod gave a worrying lurch, Aris tumbled directly onto her, their faces inches apart. His eyes, usually full of analytical ice, were wide with a very human panic. 'Well,' he whispered, the scent of lavender and terror filling the tiny space, 'This is an unprecedented proximity event.'"}
+        ];
+
+        const themeStyles = {
+            classicSepia: {
+                background: '#FDFBF8', text: '#4A3F35',
+                contentBg: '#FDFBF8', isImage: false,
+                headingColor: '#884A4A'
+            },
+            darkAcademia: {
+                background: '#273746', text: '#EAECEE',
+                contentBg: '#273746', isImage: false,
+                headingColor: '#C79F5E'
+            },
+            agedParchment: {
+                background: '#F4F1D7', text: '#443C36',
+                contentBg: '#F4F1D7', isImage: false,
+                headingColor: '#443C36'
+            },
+            cozyCoffeeShop: {
+                backgroundImage: 'url("https://placehold.co/1920x1080/403020/FFFFFF?text=Cozy+Coffee+Shop")',
+                filter: 'brightness(0.65)',
+                text: 'text-white/90',
+                contentBg: 'bg-black/60',
+                isImage: true,
+                headingColor: '#C79F5E'
+            },
+            greenValleyView: {
+                backgroundImage: 'url("https://placehold.co/1920x1080/A0B2A0/FFFFFF?text=Green+Valley+View")',
+                filter: 'brightness(0.75)',
+                text: 'text-gray-800',
+                contentBg: 'bg-white/70',
+                isImage: true,
+                headingColor: '#607C6F'
+            }
+        };
+
+        // --- Utility Functions ---
+
+        const getProfileDocRef = () => {
+            return db && userId ? doc(db, 'artifacts', appId, 'users', userId, 'profile', 'user_data') : null;
+        };
+
+        const getBooksCollectionRef = () => {
+            return db && userId ? collection(db, 'artifacts', appId, 'users', userId, 'books') : null;
+        };
+
+        const saveProfile = async (newProfile) => {
+            const profileRef = getProfileDocRef();
+            if (profileRef) {
+                await setDoc(profileRef, newProfile, { merge: true }).catch(console.error);
+            }
+            // Update local state and re-render header/modal
+            profile = { ...profile, ...newProfile };
+            currentTheme = profile.defaultTheme;
+            renderApp();
+        };
+
+        const addBookToDb = async (book) => {
+            const booksRef = getBooksCollectionRef();
+            if (booksRef) {
+                await addDoc(booksRef, {
+                    ...book,
+                    createdAt: serverTimestamp()
+                });
+            }
+        };
+
+        // --- Modal Rendering ---
+
+        const renderReadingModal = (book) => {
+            const modal = document.getElementById('reading-modal');
+            const style = themeStyles[currentTheme];
+
+            // Apply theme styles to modal container
+            modal.style.backgroundColor = style.isImage ? 'rgba(0, 0, 0, 0.9)' : style.background;
+            modal.style.backgroundImage = style.isImage ? style.backgroundImage : 'none';
+            modal.style.filter = style.isImage ? style.filter : 'none';
+            modal.className = `fixed inset-0 z-50 overflow-y-auto ${style.isImage ? 'bg-cover bg-fixed bg-center' : ''}`;
+
+            const themeButtons = Object.keys(themeStyles).map(themeName => `
+                <button
+                    onclick="handleThemeChange('${themeName}')"
+                    class="px-3 py-1 rounded-full text-xs font-semibold uppercase tracking-wider transition-all duration-200 shadow-md
+                        ${currentTheme === themeName ? 'bg-[#C79F5E] text-[#4A3F35] scale-105' : 'bg-white/80 text-gray-700 hover:bg-white'}"
+                >
+                    ${themeName.replace(/([A-Z])/g, ' $1').trim()}
+                </button>
+            `).join('');
+
+
+            modal.innerHTML = `
+                <div class="relative z-10 min-h-screen p-4 md:p-8 flex flex-col items-center justify-start transition-all duration-500 transform scale-100 translate-y-0 font-serif-book">
+                    <!-- Theme Selector & Back Button -->
+                    <div class="w-full max-w-6xl flex flex-wrap justify-between items-center mb-6 p-2 rounded-lg bg-black/10 backdrop-blur-sm">
+                        <button
+                            onclick="handleCloseBook()"
+                            class="text-lg font-bold px-4 py-2 bg-[#884A4A] text-white rounded-lg shadow-xl hover:bg-[#A07575] transition duration-200"
+                        >
+                            ← Back to Bookshelf
+                        </button>
+                        <div class="flex flex-wrap gap-2 text-sm">
+                            ${themeButtons}
+                        </div>
+                    </div>
+
+                    <!-- Book Content -->
+                    <div class="w-full max-w-5xl p-6 md:p-12 shadow-2xl rounded-lg border-2 border-black/10 transition-colors duration-500 ${style.contentBg} ${style.text}">
+                        <h1 class="text-4xl md:text-5xl font-bold mb-2 text-center" style="color: ${style.headingColor || '#884A4A'};">
+                            ${book.title}
+                        </h1>
+                        <h2 class="text-xl md:text-2xl italic mb-6 text-center opacity-80">
+                            by ${book.author}
+                        </h2>
+                        <div class="mt-8 text-lg leading-relaxed space-y-6 whitespace-pre-wrap">
+                            ${book.content.split('\n\n').map(p => `<p>${p}</p>`).join('')}
+                        </div>
+                    </div>
+                </div>
+            `;
+            modal.classList.remove('hidden');
+        };
+
+        const renderSettingsModal = () => {
+            const modal = document.getElementById('settings-modal');
+
+            modal.innerHTML = `
+                <div class="bg-white p-8 rounded-xl shadow-2xl w-full max-w-lg border-4 border-[#884A4A]">
+                    <h2 class="text-3xl font-serif-book font-bold mb-6 text-[#4A3F35]">Profile Settings</h2>
+
+                    <!-- PFP Preview -->
+                    <div class="mb-6 flex flex-col items-center">
+                        <img
+                            src="${profile.pfpUrl}"
+                            alt="Profile Preview"
+                            class="w-24 h-24 rounded-full object-cover border-4 border-gray-300 shadow-lg mb-3"
+                            onerror="this.onerror=null;this.src='https://placehold.co/100x100/A07575/FFFFFF?text=PFP'"
+                        />
+                        <p class="text-sm text-gray-500 italic">User ID: ${userId || 'Authenticating...'}</p>
+                    </div>
+
+                    <!-- Nickname Input -->
+                    <div class="mb-4">
+                        <label class="block text-sm font-medium mb-1 text-[#4A3F35]">Nickname</label>
+                        <input
+                            type="text"
+                            id="setting-nickname"
+                            value="${profile.nickname}"
+                            class="w-full p-3 border-2 border-gray-300 rounded-lg focus:border-gray-500 transition"
+                            placeholder="Enter your reading name"
+                        />
+                    </div>
+
+                    <!-- PFP URL Input -->
+                    <div class="mb-6">
+                        <label class="block text-sm font-medium mb-1 text-[#4A3F35]">Profile Picture URL</label>
+                        <input
+                            type="text"
+                            id="setting-pfpurl"
+                            value="${profile.pfpUrl}"
+                            class="w-full p-3 border-2 border-gray-300 rounded-lg focus:border-gray-500 transition"
+                            placeholder="https://your-image-url.jpg"
+                        />
+                    </div>
+
+                    <!-- Buttons -->
+                    <div class="flex justify-end space-x-3">
+                        <button
+                            onclick="handleCloseSettings()"
+                            class="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition"
+                        >
+                            Cancel
+                        </button>
+                        <button
+                            onclick="handleSaveSettings()"
+                            class="px-4 py-2 bg-[#C79F5E] text-[#4A3F35] rounded-lg hover:bg-[#D5B87E] font-semibold transition"
+                        >
+                            Save Changes
+                        </button>
+                    </div>
+                </div>
+            `;
+            modal.classList.remove('hidden');
+        };
+
+        // --- Core Rendering Function ---
+
+        const renderBookshelf = () => {
+            const main = document.getElementById('bookshelf-main');
+            const genreColorMap = {
+                'Fantasy': '#6A1B9A', 'Murder Mystery': '#B71C1C', 'Romcom': '#E91E63', 'Adventure': '#00695C', 'All': '#4A3F35',
+            };
+
+            const filteredBooks = books.filter(book => {
+                const matchesGenre = activeGenre === 'All' || book.genre === activeGenre;
+                const matchesSearch = searchQuery === '' ||
+                    book.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                    book.author.toLowerCase().includes(searchQuery.toLowerCase());
+                return matchesGenre && matchesSearch;
+            });
+
+            if (filteredBooks.length === 0) {
+                main.innerHTML = `<p class="text-center text-xl py-20 italic opacity-70">No books found matching your criteria.</p>`;
+                return;
+            }
+
+            let html = '';
+            for (let i = 0; i < filteredBooks.length; i += 4) {
+                const shelfBooks = filteredBooks.slice(i, i + 4);
+                
+                // Start a new bookshelf row
+                html += '<div class="bookshelf-row mb-12">';
+                html += '<div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-8 px-4 sm:px-8">';
+
+                shelfBooks.forEach((book, index) => {
+                    const spineColor = genreColorMap[book.genre] || genreColorMap['All'];
+                    const bookHtml = `
+                        <div class="h-96">
+                            <div
+                                onclick="handleOpenBook('${book.id}')"
+                                style="background-color: ${spineColor};"
+                                class="book-spine flex flex-col items-center justify-between p-4 text-white font-serif-book relative border-l-[10px] border-r-[10px] border-black/10 rounded-r-sm"
+                            >
+                                <div class="absolute inset-0 z-0 shadow-[inset_0_0_10px_rgba(0,0,0,0.5),inset_0_0_15px_rgba(255,255,255,0.2)]"></div>
+                                <div class="h-2 w-full bg-white/10"></div>
+                                <div class="flex flex-col items-center justify-center h-full w-full p-2">
+                                    <p
+                                        style="color: #C79F5E;"
+                                        class="text-center text-xs font-bold uppercase tracking-wide overflow-hidden max-h-16"
+                                    >
+                                        ${book.title}
+                                    </p>
+                                    <p class="text-center text-xs italic opacity-80 mt-1">${book.author}</p>
+                                </div>
+                                <div class="h-2 w-full bg-white/10"></div>
+                                <div class="text-xs absolute bottom-1 right-1 px-1 py-0.5 rounded-full bg-black/30 opacity-70">
+                                    ${book.genre}
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                    html += bookHtml;
+                });
+
+                // Close grid and row
+                html += '</div></div>';
+            }
+
+            main.innerHTML = html;
+        };
+
+        const renderGenreFilters = () => {
+            const filterContainer = document.getElementById('genre-filters');
+            const uniqueGenres = ['All', ...new Set(books.map(b => b.genre))].sort();
+
+            const genreHtml = uniqueGenres.map(genre => `
+                <button
+                    onclick="handleGenreSelect('${genre}')"
+                    class="px-4 py-2 text-sm font-medium rounded-full transition-all duration-200 whitespace-nowrap border-2
+                    ${activeGenre === genre
+                        ? 'bg-[#607C6F] text-white shadow-md shadow-[#607C6F]/50 border-white'
+                        : 'bg-white text-[#4A3F35] border-[#607C6F] hover:bg-gray-100'
+                    }"
+                >
+                    ${genre}
+                </button>
+            `).join('');
+
+            filterContainer.innerHTML = genreHtml;
+        };
+        
+        const renderApp = () => {
+            renderBookshelf();
+            renderGenreFilters();
+        }
+
+        // --- Event Handlers (Made global for inline HTML use) ---
+        window.handleThemeChange = (theme) => {
+            currentTheme = theme;
+            saveProfile({ defaultTheme: theme });
+            // Re-render modal with new theme instantly
+            const bookToOpen = books.find(b => b.id === document.getElementById('reading-modal').dataset.bookId);
+            if (bookToOpen) {
+                renderReadingModal(bookToOpen);
+            }
+        };
+
+        window.handleOpenBook = (bookId) => {
+            const book = books.find(b => b.id === bookId);
+            if (book) {
+                document.getElementById('reading-modal').dataset.bookId = bookId;
+                renderReadingModal(book);
+            }
+        };
+
+        window.handleCloseBook = () => {
+            document.getElementById('reading-modal').classList.add('hidden');
+        };
+
+        window.handleGenreSelect = (genre) => {
+            activeGenre = genre;
+            document.getElementById('search-input').value = '';
+            searchQuery = '';
+            renderApp();
+        };
+
+        window.handleCloseSettings = () => {
+            document.getElementById('settings-modal').classList.add('hidden');
+        };
+
+        window.handleSaveSettings = () => {
+            const nickname = document.getElementById('setting-nickname').value;
+            const pfpUrl = document.getElementById('setting-pfpurl').value;
+            saveProfile({ nickname, pfpUrl });
+            handleCloseSettings();
+        };
+
+        // --- Data Listeners ---
+
+        const startFirestoreListeners = () => {
+            // 1. Profile Listener
+            const profileRef = getProfileDocRef();
+            if (profileRef) {
+                onSnapshot(profileRef, (doc) => {
+                    if (doc.exists()) {
+                        profile = { ...profile, ...doc.data() };
+                        currentTheme = profile.defaultTheme || 'classicSepia';
+                    } else {
+                        setDoc(profileRef, profile, { merge: true }).catch(console.error);
+                    }
+                    renderApp(); // Rerender in case nickname/theme changed
+                }, console.error);
+            }
+
+            // 2. Books Listener
+            const booksRef = getBooksCollectionRef();
+            if (booksRef) {
+                onSnapshot(collection(booksRef, 'books'), async (snapshot) => {
+                    if (snapshot.empty && MOCK_BOOKS.length > 0) {
+                        // If empty, populate with mock data
+                        const existingDocs = await getDocs(booksRef);
+                        if (existingDocs.empty) { // Prevent re-adding if snapshot was just slow
+                            MOCK_BOOKS.forEach(book => addBookToDb(book));
+                        }
+                    }
+
+                    books = snapshot.docs.map(doc => ({
+                        id: doc.id,
+                        ...doc.data()
+                    }));
+                    renderApp();
+                }, console.error);
+            }
+        };
+
+
+        // --- Initialization ---
+
+        window.onload = () => {
+            // Event Listeners for main UI elements
+            document.getElementById('settings-button').addEventListener('click', () => renderSettingsModal());
+            document.getElementById('search-input').addEventListener('input', (e) => {
+                searchQuery = e.target.value;
+                activeGenre = 'All';
+                renderApp();
+            });
+            
+            // Firebase Authentication
+            if (auth) {
+                onAuthStateChanged(auth, async (user) => {
+                    if (user) {
+                        userId = user.uid;
+                        isAuthReady = true;
+                        startFirestoreListeners();
+                    } else {
+                        if (initialAuthToken) {
+                            try {
+                                await signInWithCustomToken(auth, initialAuthToken);
+                            } catch (e) {
+                                console.error("Custom token sign-in failed, signing in anonymously.", e);
+                                await signInAnonymously(auth);
+                            }
+                        } else {
+                            await signInAnonymously(auth);
+                        }
+                    }
+                });
+            } else {
+                // No Firebase config: Use mock data directly
+                books = MOCK_BOOKS.map((book, index) => ({ ...book, id: `mock-${index}` }));
+                renderApp();
+            }
+        };
+    </script>
+</body>
+</html>
